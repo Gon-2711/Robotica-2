@@ -1,8 +1,7 @@
-# Proyecto de Robótica 2
+# Proyectos de Robótica 2
 
-Este repositorio contiene los archivos y el código fuente desarrollados para el curso/proyecto de Robótica 2. El proyecto está dividido en dos partes principales: el control y simulación de un brazo manipulador, y una aplicación para cálculos dinámicos utilizando el enfoque de Lagrange-Euler.
-
-## Estructura del Proyecto
+Este repositorio contiene los archivos y los codigos usados en cada proyecto
+## Estructura de los Proyectos
 
 ### 1. Manipulador (`/Manipulador`)
 Esta carpeta contiene todo lo relacionado con la cinemática, el control y la interfaz gráfica del brazo robótico.
