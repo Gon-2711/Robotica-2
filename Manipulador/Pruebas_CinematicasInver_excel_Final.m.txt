@@ -1,0 +1,682 @@
+%% =========================================================================
+%  VALIDACIÓN DE CINEMÁTICA INVERSA – ROBOT AR-4DF
+%  Universidad de Pamplona | Robótica II
+% =========================================================================
+%  Descripción:
+%    Valida los modelos cinemáticos inversos (geométrico y analítico)
+%    usando un archivo Excel con ángulos y matrices NOAP precalculadas.
+%    La referencia para el error es la cinemática directa GEOMÉTRICA,
+%    garantizando independencia y evitando circularidad.
+% =========================================================================
+
+clear; clc; close all;
+
+%% =========================================================================
+%  SECCIÓN 1 – PARÁMETROS DEL ROBOT
+% =========================================================================
+
+% Longitudes de los eslabones [cm]
+L1 = 7.6;   % Altura base
+L2 = 10.5;  % Eslabón 2
+L3 = 10;    % Eslabón 3
+L4 = 4;     % Eslabón 4
+
+% Límites articulares [grados]
+limites.q1 = [-180, 180];
+limites.q2 = [-180,   0];
+limites.q3 = [ -90,  90];
+limites.q4 = [ -90,  90];
+
+% Umbral de precisión (error < 0.5 cm = prueba exitosa)
+UMBRAL_POS = 0.5;   % [cm]
+
+% Archivo Excel con datos precalculados
+archivo_excel = 'MTH_Workspace_AR4DF_Completo2.xlsx';
+
+fprintf('\n==========================================================\n');
+fprintf('   VALIDACIÓN DE CINEMÁTICA INVERSA – AR-4DF\n');
+fprintf('   Archivo: %s\n', archivo_excel);
+fprintf('==========================================================\n\n');
+
+%% =========================================================================
+%  SECCIÓN 2 – LECTURA DEL ARCHIVO EXCEL
+% =========================================================================
+% El Excel tiene:
+%   Columnas 1-4: ángulos θ1-θ4 (radianes o grados)
+%   Columnas 5-20: Matriz NOAP (16 valores: T11...T44)
+
+fprintf('Leyendo datos del archivo Excel...\n');
+
+% Verificar existencia del archivo
+if ~exist(archivo_excel, 'file')
+    error('Archivo no encontrado: %s', archivo_excel);
+end
+
+% Leer datos numéricos
+data = readmatrix(archivo_excel);
+
+% Filtrar filas con datos válidos (al menos 20 columnas)
+if size(data, 2) < 20
+    error('El archivo no tiene las columnas necesarias (mínimo 20).');
+end
+data = data(sum(~isnan(data), 2) >= 20, 1:20);
+n_filas = size(data, 1);
+fprintf('  Filas válidas: %d\n', n_filas);
+
+% Extraer ángulos originales
+q_orig_raw = data(:, 1:4);
+
+% Detectar unidades (radianes o grados)
+max_angulo = max(abs(q_orig_raw(:)));
+if max_angulo <= 2*pi + 0.1
+    % Ángulos en radianes → convertir a grados
+    q_orig_deg = rad2deg(q_orig_raw);
+    fprintf('  Unidades detectadas: RADIANES (convertidos a grados)\n');
+else
+    % Ángulos ya en grados
+    q_orig_deg = q_orig_raw;
+    fprintf('  Unidades detectadas: GRADOS\n');
+end
+
+% Reconstruir matrices NOAP (última fila siempre [0 0 0 1])
+NOAP_excel = zeros(4, 4, n_filas);
+for i = 1:n_filas
+    vals = data(i, 5:20);
+    NOAP_excel(:,:,i) = reshape(vals, 4, 4)';
+    NOAP_excel(4,:,i) = [0, 0, 0, 1];
+end
+
+% Calcular posición de cada punto
+Px = squeeze(NOAP_excel(1,4,:));
+Py = squeeze(NOAP_excel(2,4,:));
+Pz = squeeze(NOAP_excel(3,4,:));
+
+% Calcular cuadrantes (usando arrayfun para cada punto individualmente)
+cuadrantes = zeros(n_filas, 1);
+for i = 1:n_filas
+    cuadrantes(i) = determinarCuadrante(Px(i), Py(i));
+end
+
+fprintf('  Distribución por cuadrante:\n');
+for c = 1:4
+    fprintf('    Cuadrante %d: %d puntos\n', c, sum(cuadrantes == c));
+end
+
+%% =========================================================================
+%  SECCIÓN 3 – REFERENCIA INDEPENDIENTE (DIRECTA GEOMÉTRICA)
+% =========================================================================
+% IMPORTANTE: La referencia NO se toma del Excel. Se recalcula con la
+% cinemática DIRECTA GEOMÉTRICA, que es independiente de la DH.
+% Esto evita circularidad en la validación.
+
+fprintf('\nGenerando NOAP de referencia (directa geométrica)...\n');
+
+NOAP_ref = zeros(4, 4, n_filas);
+for i = 1:n_filas
+    NOAP_ref(:,:,i) = directaGeometrica(q_orig_deg(i,:), L1, L2, L3, L4);
+end
+
+% Verificar consistencia entre directas (debe ser ~0)
+dif_media = 0;
+dif_max = 0;
+for i = 1:n_filas
+    d = norm(NOAP_ref(1:3,4,i) - NOAP_excel(1:3,4,i));
+    dif_media = dif_media + d;
+    if d > dif_max, dif_max = d; end
+end
+dif_media = dif_media / n_filas;
+
+fprintf('  Diferencia media NOAP_ref vs NOAP_excel: %.2e cm\n', dif_media);
+fprintf('  Diferencia máxima: %.2e cm\n', dif_max);
+if dif_max < 1e-6
+    fprintf('  OK: Ambas directas son equivalentes (solo ruido numérico).\n');
+else
+    fprintf('  AVISO: Diferencia pequeña pero no trivial.\n');
+end
+
+%% =========================================================================
+%  SECCIÓN 4 – EJECUCIÓN DE LAS PRUEBAS
+% =========================================================================
+% Para cada punto:
+%   1. Entrada de inversa = NOAP_excel
+%   2. Inversa calcula ángulos
+%   3. Reconstruir NOAP con directa DH
+%   4. Error contra NOAP_ref (independiente)
+
+fprintf('\n----------------------------------------------------------\n');
+fprintf('  EJECUTANDO VALIDACIÓN\n');
+fprintf('----------------------------------------------------------\n\n');
+
+% Inicializar resultados
+resultados.geometrica = [];
+resultados.analitica = [];
+
+% Función auxiliar para filas con NaN
+fila_nan = @(idx, c, q) [idx, c, NaN, NaN, NaN, NaN, NaN, NaN, NaN, ...
+                         q(1), q(2), q(3), q(4)];
+
+% Barra de progreso
+h_wait = waitbar(0, 'Ejecutando validación...', 'Name', 'AR-4DF');
+
+for idx = 1:n_filas
+    waitbar(idx/n_filas, h_wait, sprintf('Prueba %d / %d', idx, n_filas));
+    
+    c = cuadrantes(idx);
+    q_deg = q_orig_deg(idx, :);
+    T_entrada = NOAP_excel(:,:,idx);
+    T_ref = NOAP_ref(:,:,idx);
+    
+    % ── INVERSA GEOMÉTRICA ──────────────────────────────────────────────
+    try
+        Q_geo = inversaGeometrica(T_entrada, L1, L2, L3, L4);
+        
+        if ~isempty(Q_geo) && ~all(isnan(Q_geo(:)))
+            mejor_ep = inf;
+            mejor_sol = [];
+            mejor_er = NaN;
+            mejor_et = NaN;
+            
+            for j = 1:size(Q_geo, 1)
+                if any(isnan(Q_geo(j,:))), continue; end
+                T_rec = directaDH(Q_geo(j,1), Q_geo(j,2), ...
+                                  Q_geo(j,3), Q_geo(j,4), L1, L2, L3, L4);
+                [ep, er, et] = errorNOAP(T_ref, T_rec);
+                if ep < mejor_ep
+                    mejor_ep = ep;
+                    mejor_er = er;
+                    mejor_et = et;
+                    mejor_sol = Q_geo(j, :);
+                end
+            end
+            
+            if ~isempty(mejor_sol)
+                resultados.geometrica = [resultados.geometrica; ...
+                    idx, c, mejor_ep, mejor_er, mejor_et, ...
+                    mejor_sol(1), mejor_sol(2), mejor_sol(3), mejor_sol(4), ...
+                    q_deg(1), q_deg(2), q_deg(3), q_deg(4)];
+            else
+                resultados.geometrica = [resultados.geometrica; fila_nan(idx,c,q_deg)];
+            end
+        else
+            resultados.geometrica = [resultados.geometrica; fila_nan(idx,c,q_deg)];
+        end
+    catch ME
+        resultados.geometrica = [resultados.geometrica; fila_nan(idx,c,q_deg)];
+        if idx <= 5
+            fprintf('  [GEO] Error en prueba %d: %s\n', idx, ME.message);
+        end
+    end
+    
+    % ── INVERSA ANALÍTICA ───────────────────────────────────────────────
+    try
+        Q_ana = inversaAnalitica(T_entrada, L1, L2, L3, L4);
+        
+        if ~any(isnan(Q_ana))
+            T_rec = directaDH(Q_ana(1), Q_ana(2), Q_ana(3), Q_ana(4), L1, L2, L3, L4);
+            [ep, er, et] = errorNOAP(T_ref, T_rec);
+            resultados.analitica = [resultados.analitica; ...
+                idx, c, ep, er, et, ...
+                Q_ana(1), Q_ana(2), Q_ana(3), Q_ana(4), ...
+                q_deg(1), q_deg(2), q_deg(3), q_deg(4)];
+        else
+            resultados.analitica = [resultados.analitica; fila_nan(idx,c,q_deg)];
+        end
+    catch ME
+        resultados.analitica = [resultados.analitica; fila_nan(idx,c,q_deg)];
+        if idx <= 5
+            fprintf('  [ANA] Error en prueba %d: %s\n', idx, ME.message);
+        end
+    end
+    
+    % Mostrar progreso cada 500 pruebas
+    if mod(idx, 500) == 0
+        fprintf('  Progreso: %d / %d\n', idx, n_filas);
+    end
+end
+
+close(h_wait);
+fprintf('\nValidación completada.\n');
+
+%% =========================================================================
+%  SECCIÓN 5 – ANÁLISIS ESTADÍSTICO
+% =========================================================================
+
+fprintf('\n==========================================================\n');
+fprintf('  ANÁLISIS DE RESULTADOS\n');
+fprintf('==========================================================\n\n');
+
+cuad_nombres = {'Cuadrante 1 (Px>0, Py>0)', 'Cuadrante 2 (Px<0, Py>0)', ...
+                'Cuadrante 3 (Px<0, Py<0)', 'Cuadrante 4 (Px>0, Py<0)'};
+
+stats_geo = zeros(4, 4);  % [media, std, max, precision%]
+stats_ana = zeros(4, 4);
+ep_geo_global = [];
+ep_ana_global = [];
+
+for metodo = 1:2
+    if metodo == 1
+        R = resultados.geometrica;
+        etiq = 'GEOMÉTRICA';
+    else
+        R = resultados.analitica;
+        etiq = 'ANALÍTICA (D-H)';
+    end
+    
+    fprintf('=== CINEMÁTICA INVERSA %s ===\n\n', etiq);
+    
+    for c = 1:4
+        datos_c = R(R(:,2) == c, :);
+        if isempty(datos_c), continue; end
+        
+        ep_c = datos_c(:, 3);
+        validos = ~isnan(ep_c);
+        ep_v = ep_c(validos);
+        
+        if isempty(ep_v)
+            fprintf('%s: sin datos válidos\n\n', cuad_nombres{c});
+            continue;
+        end
+        
+        prec = sum(ep_v <= UMBRAL_POS) / length(ep_c) * 100;
+        
+        fprintf('%s:\n', cuad_nombres{c});
+        fprintf('  Pruebas con solución  : %d / %d\n', sum(validos), length(ep_c));
+        fprintf('  Precisión (<=%.2f cm) : %.1f%%\n', UMBRAL_POS, prec);
+        fprintf('  Error medio           : %.6f cm\n', mean(ep_v));
+        fprintf('  Desviación estándar   : %.6f cm\n', std(ep_v));
+        fprintf('  Error máximo          : %.6f cm\n\n', max(ep_v));
+        
+        if metodo == 1
+            stats_geo(c,:) = [mean(ep_v), std(ep_v), max(ep_v), prec];
+            ep_geo_global = [ep_geo_global; ep_v];
+        else
+            stats_ana(c,:) = [mean(ep_v), std(ep_v), max(ep_v), prec];
+            ep_ana_global = [ep_ana_global; ep_v];
+        end
+    end
+    
+    % Estadísticas globales
+    ep_tot = R(:,3);
+    ep_tot_v = ep_tot(~isnan(ep_tot));
+    if ~isempty(ep_tot_v)
+        prec_gl = sum(ep_tot_v <= UMBRAL_POS) / length(ep_tot) * 100;
+        fprintf('  >> GLOBAL: media=%.6f  std=%.6f  max=%.6f  precision=%.1f%%\n\n', ...
+                mean(ep_tot_v), std(ep_tot_v), max(ep_tot_v), prec_gl);
+    end
+end
+
+%% =========================================================================
+%  SECCIÓN 6 – GRÁFICAS
+% =========================================================================
+
+fprintf('Generando gráficas...\n');
+
+% Paleta de colores por cuadrante
+cQ = [0.12 0.47 0.71;   % Q1 – azul
+      0.20 0.63 0.17;   % Q2 – verde
+      0.89 0.10 0.11;   % Q3 – rojo
+      1.00 0.50 0.00];  % Q4 – naranja
+
+% FIGURA 1: Dashboard principal
+figure('Name', 'Validación Cinemática Inversa – AR-4DF', ...
+       'Color', 'white', 'Position', [40, 30, 1420, 780]);
+sgtitle('Validación de Cinemática Inversa – Robot AR-4DF', ...
+        'FontSize', 15, 'FontWeight', 'bold');
+
+% SP1 – Error posición Geométrica por cuadrante
+subplot(2,4,1); hold on;
+for c = 1:4
+    d = resultados.geometrica(resultados.geometrica(:,2)==c, 3);
+    d = d(~isnan(d));
+    if ~isempty(d)
+        boxplot_manual(d, c, cQ(c,:));
+    end
+end
+yline(UMBRAL_POS, '--r', 'LineWidth', 1.5, ...
+      'Label', sprintf('Umbral %.2f cm', UMBRAL_POS));
+ylabel('Error posición [cm]');
+title('Error posición – Geométrica');
+set(gca, 'XTick', 1:4, 'XTickLabel', {'Q1','Q2','Q3','Q4'});
+xlim([0.3 4.7]); grid on; box on;
+
+% SP2 – Error posición Analítica por cuadrante
+subplot(2,4,2); hold on;
+for c = 1:4
+    d = resultados.analitica(resultados.analitica(:,2)==c, 3);
+    d = d(~isnan(d));
+    if ~isempty(d)
+        boxplot_manual(d, c, cQ(c,:));
+    end
+end
+yline(UMBRAL_POS, '--r', 'LineWidth', 1.5, ...
+      'Label', sprintf('Umbral %.2f cm', UMBRAL_POS));
+ylabel('Error posición [cm]');
+title('Error posición – Analítica (D-H)');
+set(gca, 'XTick', 1:4, 'XTickLabel', {'Q1','Q2','Q3','Q4'});
+xlim([0.3 4.7]); grid on; box on;
+
+% SP3 – Precisión por cuadrante
+subplot(2,4,3);
+b = bar(1:4, [stats_geo(:,4), stats_ana(:,4)], 0.72);
+b(1).FaceColor = [0.18 0.45 0.80];
+b(2).FaceColor = [0.93 0.40 0.20];
+for c = 1:4
+    if stats_geo(c,4) > 0
+        text(b(1).XEndPoints(c), stats_geo(c,4)+2, sprintf('%.0f%%', stats_geo(c,4)), ...
+             'HorizontalAlignment', 'center', 'FontSize', 8, 'FontWeight', 'bold');
+    end
+    if stats_ana(c,4) > 0
+        text(b(2).XEndPoints(c), stats_ana(c,4)+2, sprintf('%.0f%%', stats_ana(c,4)), ...
+             'HorizontalAlignment', 'center', 'FontSize', 8, 'FontWeight', 'bold');
+    end
+end
+set(gca, 'XTickLabel', {'Q1','Q2','Q3','Q4'});
+ylabel('Precisión [%]'); ylim([0 115]);
+title('Precisión por cuadrante');
+legend({'Geométrica','Analítica'}, 'Location', 'southwest');
+grid on; box on;
+
+% SP4 – Error medio por cuadrante
+subplot(2,4,4);
+b2 = bar(1:4, [stats_geo(:,1), stats_ana(:,1)], 0.72);
+b2(1).FaceColor = [0.18 0.45 0.80];
+b2(2).FaceColor = [0.93 0.40 0.20];
+set(gca, 'XTickLabel', {'Q1','Q2','Q3','Q4'});
+ylabel('Error medio [cm]');
+title('Error medio posición por cuadrante');
+legend({'Geométrica','Analítica'}, 'Location', 'northeast');
+grid on; box on;
+
+% SP5 – Histograma errores Geométrica
+subplot(2,4,5);
+ep_g = resultados.geometrica(:,3); ep_g = ep_g(~isnan(ep_g));
+if ~isempty(ep_g)
+    histogram(ep_g, 30, 'FaceColor', [0.18 0.45 0.80], ...
+              'EdgeColor', 'w', 'FaceAlpha', 0.85);
+    xline(UMBRAL_POS, '--r', 'LineWidth', 1.5, ...
+          'Label', sprintf('Umbral=%.2f', UMBRAL_POS));
+    xline(mean(ep_g), '-k', 'LineWidth', 1.5, ...
+          'Label', sprintf('Media=%.4f', mean(ep_g)));
+end
+xlabel('Error posición [cm]'); ylabel('Frecuencia');
+title('Distribución errores – Geométrica'); grid on;
+
+% SP6 – Histograma errores Analítica
+subplot(2,4,6);
+ep_a = resultados.analitica(:,3); ep_a = ep_a(~isnan(ep_a));
+if ~isempty(ep_a)
+    histogram(ep_a, 30, 'FaceColor', [0.93 0.40 0.20], ...
+              'EdgeColor', 'w', 'FaceAlpha', 0.85);
+    xline(UMBRAL_POS, '--r', 'LineWidth', 1.5, ...
+          'Label', sprintf('Umbral=%.2f', UMBRAL_POS));
+    xline(mean(ep_a), '-k', 'LineWidth', 1.5, ...
+          'Label', sprintf('Media=%.4f', mean(ep_a)));
+end
+xlabel('Error posición [cm]'); ylabel('Frecuencia');
+title('Distribución errores – Analítica'); grid on;
+
+% SP7 – Error por prueba (Geométrica)
+subplot(2,4,7); hold on;
+for c = 1:4
+    idx_c = find(resultados.geometrica(:,2) == c);
+    ep_c = resultados.geometrica(idx_c, 3);
+    v = ~isnan(ep_c);
+    if any(v)
+        scatter(idx_c(v), ep_c(v), 10, cQ(c,:), 'filled', ...
+                'MarkerFaceAlpha', 0.6, 'DisplayName', sprintf('Q%d', c));
+    end
+end
+yline(UMBRAL_POS, '--r', 'LineWidth', 1.3, ...
+      'Label', sprintf('Umbral %.2f cm', UMBRAL_POS));
+xlabel('Índice de prueba'); ylabel('Error posición [cm]');
+title('Error por prueba – Geométrica');
+legend('Location', 'northeast'); grid on; box on;
+
+% SP8 – Volumen de trabajo
+subplot(2,4,8); hold on;
+for c = 1:4
+    idx_c = find(cuadrantes == c);
+    if ~isempty(idx_c)
+        scatter3(Px(idx_c), Py(idx_c), Pz(idx_c), 8, cQ(c,:), 'filled', ...
+                 'MarkerFaceAlpha', 0.4, 'DisplayName', sprintf('Q%d', c));
+    end
+end
+xlabel('X [cm]'); ylabel('Y [cm]'); zlabel('Z [cm]');
+title('Volumen de trabajo');
+legend('Location', 'best'); grid on; view(45, 30); box on;
+
+%% =========================================================================
+%  SECCIÓN 7 – EXPORTAR RESULTADOS
+% =========================================================================
+
+fprintf('\nExportando resultados a Excel...\n');
+nombre_salida = 'Resultados_Validacion_CinematicaInversa.xlsx';
+
+nombres_col = {'Indice','Cuadrante','ErrPos_cm','ErrRot','ErrTotal', ...
+               'q1_inv','q2_inv','q3_inv','q4_inv', ...
+               'q1_orig_deg','q2_orig_deg','q3_orig_deg','q4_orig_deg'};
+
+if ~isempty(resultados.geometrica)
+    writetable(array2table(resultados.geometrica, 'VariableNames', nombres_col), ...
+               nombre_salida, 'Sheet', 'Geometrica');
+end
+if ~isempty(resultados.analitica)
+    writetable(array2table(resultados.analitica, 'VariableNames', nombres_col), ...
+               nombre_salida, 'Sheet', 'Analitica');
+end
+
+if ~isempty(ep_geo_global) && ~isempty(ep_ana_global)
+    prec_g_gl = sum(ep_geo_global <= UMBRAL_POS) / size(resultados.geometrica,1) * 100;
+    prec_a_gl = sum(ep_ana_global <= UMBRAL_POS) / size(resultados.analitica,1) * 100;
+    
+    resumen = table( ...
+        {'Geométrica'; 'Analítica'}, ...
+        [size(resultados.geometrica,1); size(resultados.analitica,1)], ...
+        [sum(~isnan(ep_geo_global)); sum(~isnan(ep_ana_global))], ...
+        [prec_g_gl; prec_a_gl], ...
+        [mean(ep_geo_global); mean(ep_ana_global)], ...
+        [std(ep_geo_global); std(ep_ana_global)], ...
+        [max(ep_geo_global); max(ep_ana_global)], ...
+        'VariableNames', {'Metodo','TotalPruebas','ConSolucion', ...
+                          'Precision_pct','ErrorMedio_cm','ErrorStd_cm','ErrorMax_cm'});
+    writetable(resumen, nombre_salida, 'Sheet', 'Resumen');
+    
+    fprintf('Archivo guardado: %s\n', nombre_salida);
+    fprintf('\n==========================================================\n');
+    fprintf('  VALIDACIÓN COMPLETADA\n');
+    fprintf('  Geométrica: %.1f%% de precisión global\n', prec_g_gl);
+    fprintf('  Analítica : %.1f%% de precisión global\n', prec_a_gl);
+    fprintf('==========================================================\n');
+else
+    fprintf('No hay datos suficientes para exportar el resumen.\n');
+end
+
+%% =========================================================================
+%  FUNCIONES AUXILIARES
+% =========================================================================
+
+% ── Cinemática directa geométrica ────────────────────────────────────────
+function MTH = directaGeometrica(q_deg, L1, L2, L3, L4)
+    q1 = deg2rad(q_deg(1)); q2 = deg2rad(q_deg(2));
+    q3 = deg2rad(q_deg(3)); q4 = deg2rad(q_deg(4));
+    q23 = -(q2 + q3);
+    
+    Noa = [cos(q1)*cos(q23), -cos(q1)*sin(q23)*sin(q4)-sin(q1)*cos(q4), ...
+                             -cos(q1)*sin(q23)*cos(q4)+sin(q1)*sin(q4), 0;
+           sin(q1)*cos(q23), -sin(q1)*sin(q23)*sin(q4)+cos(q1)*cos(q4), ...
+                             -sin(q1)*sin(q23)*cos(q4)-cos(q1)*sin(q4), 0;
+           sin(q23),          cos(q23)*sin(q4),                          cos(q23)*cos(q4), 0;
+           0,                 0,                                         0,                1];
+    
+    r = L2*cos(-q2) + (L3+L4)*cos(-q2-q3);
+    T = [1 0 0 r*cos(q1); 0 1 0 r*sin(q1);
+         0 0 1 L1 + L2*sin(-q2) + (L3+L4)*sin(-q2-q3); 0 0 0 1];
+    MTH = T * Noa;
+end
+
+% ── Matriz Denavit-Hartenberg ───────────────────────────────────────────
+function dh = denavit(theta, d, a, alfa)
+    dh = [cos(theta) -cos(alfa)*sin(theta)  sin(alfa)*sin(theta)  a*cos(theta);
+          sin(theta)  cos(alfa)*cos(theta) -sin(alfa)*cos(theta)  a*sin(theta);
+          0           sin(alfa)             cos(alfa)             d;
+          0           0                     0                     1];
+end
+
+% ── Cinemática directa D-H ──────────────────────────────────────────────
+function MTH = directaDH(q1, q2, q3, q4, L1, L2, L3, L4)
+    q1r = deg2rad(q1); q2r = deg2rad(q2);
+    q3r = deg2rad(q3); q4r = deg2rad(q4);
+    M1 = denavit(q1r,      L1, 0,    -pi/2);
+    M2 = denavit(q2r,      0,  L2,    0);
+    M3 = denavit(q3r-pi/2, 0,  0,   -pi/2);
+    M4 = denavit(q4r,      L3+L4, 0,  0);
+    MTH = M1 * M2 * M3 * M4;
+end
+
+% ── Cinemática inversa geométrica ────────────────────────────────────────
+function Q = inversaGeometrica(T, L1, L2, L3, L4)
+    Px = T(1,4); Py = T(2,4); Pz = T(3,4);
+    x4 = [T(1,1), T(2,1), T(3,1), 0];
+    
+    q1 = atan2(Py, Px);
+    if q1 < 0, q1 = q1 + pi; end
+    
+    C = (Py^2 + Px^2 + (Pz-L1)^2 - (L3+L4)^2 - L2^2) / (2*(L3+L4)*L2);
+    C = max(-1, min(1, C));
+    q31 = atan2(sqrt(1-C^2), C);
+    q32 = -q31;
+    
+    q21 = -(atan((Pz-L1)/sqrt(Px^2+Py^2)) + atan((L3+L4)*sin(-q31)/(L2+(L3+L4)*cos(-q31))));
+    q22 =  (atan((Pz-L1)/sqrt(Px^2+Py^2)) + atan((L3+L4)*sin(-q32)/(L2+(L3+L4)*cos(-q32))));
+    q23 = -q21;
+    q24 = -q22;
+    
+    if q21 > 0, q21 = q21 - pi; end
+    if q22 > 0, q22 = q22 - pi; end
+    if q23 > 0, q23 = q23 - pi; end
+    if q24 > 0, q24 = q24 - pi; end
+    
+    combos = [q21,q31; q22,q32; q21,q32; q22,q31;
+              q23,q31; q23,q32; q24,q31; q24,q32];
+    
+    Q = zeros(8, 4);
+    for k = 1:8
+        q2k = combos(k,1); q3k = combos(k,2);
+        M1 = denavit(q1, L1, 0, -pi/2);
+        M2 = denavit(q2k, 0, L2, 0);
+        M3 = denavit(q3k-pi/2, 0, 0, -pi/2);
+        M031 = M1 * M2 * M3;
+        x3 = [M031(1,1), M031(1,2), M031(1,3), 0];
+        y3 = [M031(2,1), M031(2,2), M031(2,3), 0];
+        q4k = atan(dot(x4, y3) / dot(x3, x4));
+        Q(k,:) = rad2deg([q1, q2k, q3k, q4k]);
+    end
+    Q = round(Q, 2);
+end
+
+% ── Cinemática inversa analítica ────────────────────────────────────────
+function Qsol = inversaAnalitica(T, L1, L2, L3, L4)
+    L34 = L3 + L4;
+    Ax = T(1,3); Ay = T(2,3); Az = T(3,3);
+    Oz = T(3,2); Nz = T(3,1);
+    Px = T(1,4); Py = T(2,4); Pz = T(3,4);
+    
+    q23 = atan2(-Az, sqrt(max(0, 1 - Az^2)));
+    q1 = atan2(Ay, Ax);
+    q4 = atan2(-Oz, Nz);
+    
+    W = cos(q23); S = sin(q23); N = cos(q1);
+    denom = N * L2;
+    if abs(denom) < 1e-9
+        Qsol = [NaN, NaN, NaN, NaN];
+        return;
+    end
+    
+    senq2 = (Pz - L1 + L34*S) / (-L2);
+    cosq2 = (Px - N*W*L34) / denom;
+    q2 = atan2(senq2, cosq2);
+    q3 = q23 - q2;
+    
+    q1d = rad2deg(q1); q2d = rad2deg(q2);
+    q3d = rad2deg(q3); q4d = rad2deg(q4);
+    [q1d, q2d, q3d, q4d] = compensarCuadrantes(q1d, q2d, q3d, q4d, Px, Py);
+    
+    if abs(q4d) < 0.01, q4d = 0; end
+    if q4d > 90, q4d = 0; end
+    if q4d < -90, q4d = 0; end
+    
+    Qsol = [q1d, q2d, q3d, q4d];
+end
+
+% ── Compensación de cuadrantes ──────────────────────────────────────────
+function [q1, q2, q3, q4] = compensarCuadrantes(q1, q2, q3, q4, Px, Py)
+    if Px >= 0 && Py >= 0
+        % Q1: sin cambios
+    elseif Px < 0 && Py >= 0
+        % Q2: sin cambios
+    elseif Px < 0 && Py < 0
+        q1 = 180 + q1;
+        q2 = -180 - q2;
+        q3 = -q3;
+        q4 = q4 + 180;
+        q4 = mod(q4 + 180, 360) - 180;
+        if q4 > 90, q4 = q4 - 180; end
+        if q4 < -90, q4 = q4 + 180; end
+    else
+        q1 = 180 + q1;
+        q2 = -180 - q2;
+        q3 = -q3;
+        q4 = q4 + 180;
+        q4 = mod(q4 + 180, 360) - 180;
+        if q4 > 90, q4 = q4 - 180; end
+        if q4 < -90, q4 = q4 + 180; end
+    end
+end
+
+% ── Error entre matrices NOAP ───────────────────────────────────────────
+function [ep, er, et] = errorNOAP(T1, T2)
+    ep = norm(T1(1:3,4) - T2(1:3,4));
+    er = norm(T1(1:3,1:3) - T2(1:3,1:3), 'fro');
+    et = ep + er;
+end
+
+% ── Determinar cuadrante por posición (para UN solo punto) ──────────────
+function c = determinarCuadrante(Px, Py)
+    if Px >= 0 && Py >= 0
+        c = 1;
+    elseif Px < 0 && Py >= 0
+        c = 2;
+    elseif Px < 0 && Py < 0
+        c = 3;
+    else
+        c = 4;
+    end
+end
+
+% ── Boxplot manual (evita bugs con hold on) ─────────────────────────────
+function boxplot_manual(datos, posicion, color)
+    if numel(datos) < 4, return; end
+    
+    q1v = quantile(datos, 0.25);
+    q2v = quantile(datos, 0.50);
+    q3v = quantile(datos, 0.75);
+    iqrv = q3v - q1v;
+    wlo = max(min(datos), q1v - 1.5*iqrv);
+    whi = min(max(datos), q3v + 1.5*iqrv);
+    out = datos(datos < wlo | datos > whi);
+    w = 0.35;
+    
+    patch([posicion-w, posicion+w, posicion+w, posicion-w], ...
+          [q1v, q1v, q3v, q3v], color, ...
+          'FaceAlpha', 0.35, 'EdgeColor', color, 'LineWidth', 1.5);
+    line([posicion-w, posicion+w], [q2v, q2v], ...
+         'Color', color*0.4, 'LineWidth', 2.5);
+    line([posicion, posicion], [wlo, q1v], 'Color', color, 'LineWidth', 1.2);
+    line([posicion, posicion], [q3v, whi], 'Color', color, 'LineWidth', 1.2);
+    line([posicion-w*0.4, posicion+w*0.4], [wlo, wlo], 'Color', color, 'LineWidth', 1.2);
+    line([posicion-w*0.4, posicion+w*0.4], [whi, whi], 'Color', color, 'LineWidth', 1.2);
+    
+    if ~isempty(out)
+        scatter(posicion * ones(size(out)), out, 20, color, '+', 'LineWidth', 1.2);
+    end
+end

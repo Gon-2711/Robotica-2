@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Algoritmo Lagrange-Euler</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg:       #080a0f;
+    --surface:  rgba(20, 23, 32, 0.7);
+    --surface2: rgba(28, 32, 48, 0.8);
+    --border:   rgba(42, 48, 80, 0.5);
+    --accent:   #4f8ef7;
+    --accent-glow: rgba(79, 142, 247, 0.3);
+    --accent2:  #7c3aed;
+    --gold:     #f0b429;
+    --green:    #22c55e;
+    --red:      #ef4444;
+    --text:     #e2e8f0;
+    --muted:    #94a3b8;
+    --mono:     'JetBrains Mono', monospace;
+    --sans:     'Syne', sans-serif;
+    --glass:    blur(12px) saturate(180%);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: radial-gradient(circle at 50% 0%, #1a1f35 0%, var(--bg) 70%);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    padding: 2rem 1rem 4rem;
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  .header {
+    text-align: center;
+    margin-bottom: 3.5rem;
+    animation: fadeInDown 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .header h1 {
+    font-size: clamp(2rem, 5vw, 3.2rem);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    background: linear-gradient(135deg, #fff 0%, #4f8ef7 50%, #7c3aed 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1.1;
+    margin-bottom: .8rem;
+    filter: drop-shadow(0 0 15px rgba(79, 142, 247, 0.2));
+  }
+  .header p {
+    font-family: var(--mono);
+    font-size: .85rem;
+    color: var(--muted);
+    max-width: 650px;
+    margin: .6rem auto 0;
+    line-height: 1.7;
+    letter-spacing: -0.01em;
+  }
+
+  /* ── Card ── */
+  .card {
+    background: var(--surface);
+    backdrop-filter: var(--glass);
+    -webkit-backdrop-filter: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 1.8rem;
+    margin-bottom: 1.5rem;
+    transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+    box-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.3);
+  }
+  .card:hover {
+    border-color: rgba(79, 142, 247, 0.4);
+    box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.4), 0 0 15px var(--accent-glow);
+  }
+  .card-title {
+    font-size: .75rem;
+    font-weight: 800;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: .8rem;
+  }
+  .card-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, var(--border), transparent);
+  }
+
+  /* ── Selector de GDL (Grados de Libertad) ── */
+  .dof-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .dof-row label { font-size: .85rem; color: var(--muted); font-family: var(--mono); }
+  .dof-btn {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: .9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .dof-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .dof-display {
+    font-family: var(--mono);
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--gold);
+    width: 40px;
+    text-align: center;
+  }
+
+  /* ── Grids y Matrices ── */
+  .grid3 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.5rem;
+  }
+
+  /* ── Layout Flexible para Matrices (FIX OVERLAP) ── */
+  .flex-matrices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    justify-content: flex-start;
+  }
+  .flex-matrices > * {
+    flex: 0 0 auto;
+    max-width: 100%;
+  }
+
+  /* ── Contenedor de matrices ── */
+  .matrix-wrap { overflow-x: auto; }
+  .matrix-label {
+    font-family: var(--mono);
+    font-size: .72rem;
+    color: var(--muted);
+    margin-bottom: .5rem;
+  }
+  .matrix-grid {
+    display: inline-grid;
+    gap: 4px;
+    background: var(--surface2);
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .matrix-grid input {
+    width: 72px;
+    height: 32px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: .78rem;
+    text-align: center;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .matrix-grid input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(79,142,247,.18);
+  }
+  .matrix-grid input.read-only {
+    color: var(--muted);
+    cursor: default;
+  }
+  .matrix-grid input.result-cell {
+    color: var(--green);
+    border-color: rgba(34,197,94,.3);
+    background: rgba(34,197,94,.06);
+  }
+
+  /* ── Botón de ejecución ── */
+  .run-btn {
+    display: block;
+    width: 100%;
+    padding: .9rem;
+    border-radius: 10px;
+    border: none;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #fff;
+    font-family: var(--sans);
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    cursor: pointer;
+    transition: opacity .15s, transform .1s;
+    margin: 1.2rem 0;
+  }
+  .run-btn:hover { opacity: .9; }
+  .run-btn:active { transform: scale(.98); }
+
+  /* ── Fila de la ecuación final ── */
+  .eq-row {
+    display: flex;
+    align-items: flex-start;
+    gap: .6rem;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .eq-op {
+    font-family: var(--mono);
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--muted);
+    padding-top: .4rem;
+    align-self: center;
+  }
+  .eq-block { text-align: center; }
+  .eq-block .mat-name {
+    font-family: var(--mono);
+    font-size: .68rem;
+    color: var(--gold);
+    margin-bottom: .3rem;
+    font-weight: 600;
+    letter-spacing: .06em;
+  }
+
+  /* ── Caja de resultados (salida) ── */
+  .result-card {
+    background: var(--surface);
+    border: 1px solid rgba(34,197,94,.35);
+    border-radius: 14px;
+    padding: 1.5rem;
+    margin-top: 1.2rem;
+    display: none;
+  }
+  .result-card.show { display: block; }
+  .result-title {
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin-bottom: 1.2rem;
+  }
+
+  /* ── Caja de mensajes de error ── */
+  .error-box {
+    background: rgba(239,68,68,.1);
+    border: 1px solid rgba(239,68,68,.35);
+    border-radius: 8px;
+    padding: .8rem 1rem;
+    font-family: var(--mono);
+    font-size: .78rem;
+    color: var(--red);
+    margin-top: .8rem;
+    display: none;
+  }
+  .error-box.show { display: block; }
+
+  /* ── Registro de pasos (Log) ── */
+  .steps-log {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-top: 1rem;
+    font-family: var(--mono);
+    font-size: .72rem;
+    color: var(--muted);
+    line-height: 1.9;
+    white-space: pre-wrap;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .steps-log .ok   { color: var(--green); }
+  .steps-log .info { color: var(--accent); }
+  .steps-log .warn { color: var(--gold); }
+
+  /* ── Acordeón Académico ── */
+  .accordion {
+    margin-top: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+  .accordion-item {
+    border-bottom: 1px solid var(--border);
+  }
+  .accordion-header {
+    padding: 1rem;
+    background: var(--surface2);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: .85rem;
+    font-weight: 700;
+    font-family: var(--mono);
+    color: var(--accent);
+    transition: background .2s;
+  }
+  .accordion-header:hover { background: #262c45; }
+  .accordion-content {
+    padding: 1rem;
+    display: none;
+    background: var(--bg);
+    overflow-x: auto;
+  }
+  .accordion-item.active .accordion-content { display: block; }
+  .accordion-item.active .accordion-header { border-bottom: 1px solid var(--border); }
+  
+  .step-formula {
+    font-family: var(--mono);
+    font-size: .8rem;
+    color: var(--gold);
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    background: rgba(240, 180, 41, 0.05);
+    border-left: 3px solid var(--gold);
+  }
+
+  /* ── Panel de Configuración de Pasos ── */
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.8rem;
+    margin-top: 1rem;
+  }
+  .checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.8rem;
+    color: var(--text);
+    cursor: pointer;
+    padding: 0.4rem;
+    border-radius: 6px;
+    transition: background 0.2s;
+  }
+  .checkbox-item:hover { background: var(--surface2); }
+  .checkbox-item input {
+    accent-color: var(--accent);
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Algoritmo Computacional<br>Lagrange-Euler</h1>
+  <p>Los ángulos en D-H van en radianes (use pi/2, pi, etc.).<br>
+     <strong>Auto-Detección:</strong> Coloca una variable (ej: 'q1' o 'd1') en la columna <em>dᵢ</em> para eslabón <strong>Prismático</strong>.<br>
+     Si la dejas como número/fija, asumirá <strong>Rotacional</strong> usando la columna <em>θᵢ</em>.</p>
+</div>
+
+<!-- Selector de Grados de Libertad (GDL) -->
+<div class="card">
+  <div class="card-title">Grados de libertad</div>
+  <div class="dof-row">
+    <label>Número de GDL</label>
+    <button class="dof-btn" onclick="changeDOF(-1)">−</button>
+    <div class="dof-display" id="dofDisplay">2</div>
+    <button class="dof-btn" onclick="changeDOF(+1)">+</button>
+  </div>
+</div>
+
+<!-- Configuración de Visualización -->
+<div class="card">
+  <div class="card-title">Visualización Académica</div>
+  <div class="matrix-label">Selecciona los pasos del proceso que deseas visualizar detalladamente:</div>
+  <div class="config-grid">
+    <label class="checkbox-item"><input type="checkbox" id="step_A" checked> Matrices ⁰Aᵢ (Transf.)</label>
+    <label class="checkbox-item"><input type="checkbox" id="step_Uij"> Derivadas Uᵢⱼ</label>
+    <label class="checkbox-item"><input type="checkbox" id="step_Ji"> Pseudo-Inercia Jᵢ</label>
+    <label class="checkbox-item"><input type="checkbox" id="step_D"> Inercia D(q)</label>
+    <label class="checkbox-item"><input type="checkbox" id="step_Uikm"> Derivadas Uᵢₖₘ</label>
+    <label class="checkbox-item"><input type="checkbox" id="step_hikm"> Coeficientes hᵢₖₘ</label>
+    <label class="checkbox-item"><input type="checkbox" id="step_H"> Vector Coriolis H</label>
+    <label class="checkbox-item"><input type="checkbox" id="step_C"> Vector Gravedad C</label>
+  </div>
+  <div style="margin-top: 1rem; display: flex; gap: 1rem;">
+    <button class="dof-btn" style="width: auto; padding: 0 12px; font-size: 0.7rem;" onclick="toggleAllSteps(true)">SELECCIONAR TODO</button>
+    <button class="dof-btn" style="width: auto; padding: 0 12px; font-size: 0.7rem;" onclick="toggleAllSteps(false)">LIMPIAR</button>
+  </div>
+</div>
+
+<!-- 3 secciones principales de entrada de datos -->
+<div class="grid3">
+  <!-- Matriz de Denavit-Hartenberg (D-H) -->
+  <div class="card">
+    <div class="card-title">Parámetros D-H</div>
+    <div class="matrix-label">θᵢ &nbsp;|&nbsp; dᵢ &nbsp;|&nbsp; aᵢ &nbsp;|&nbsp; αᵢ</div>
+    <div class="matrix-wrap"><div class="matrix-grid" id="dhGrid"></div></div>
+  </div>
+
+  <!-- Centro de masa (CM) -->
+  <div class="card">
+    <div class="card-title">Centros de masa (X, Y, Z)</div>
+    <div class="matrix-label">Coordenadas del CM de cada eslabón en su propio {Sᵢ}</div>
+    <div class="matrix-wrap"><div class="matrix-grid" id="cmGrid"></div></div>
+  </div>
+
+  <!-- Vector de gravedad y Masas -->
+  <div class="card">
+    <div class="card-title">Vector gravedad</div>
+    <div class="matrix-label">Componentes gx, gy, gz en sistema base {S₀}</div>
+    <div class="matrix-wrap">
+      <div class="matrix-grid" id="gravGrid" style="grid-template-columns: repeat(3,72px)">
+        <input type="text" value="0"       placeholder="gx">
+        <input type="text" value="0"       placeholder="gy">
+        <input type="text" value="-9.8066" placeholder="gz">
+      </div>
+    </div>
+    <br>
+    <div class="matrix-label" style="margin-top:.8rem">Masas de eslabones m₁…mₙ [kg]</div>
+    <div class="matrix-wrap"><div class="matrix-grid" id="massGrid" style="grid-template-columns: repeat(1,72px)"></div></div>
+  </div>
+</div>
+
+<!-- Aceleraciones articulares (q̈) -->
+<div class="card">
+  <div class="card-title">Aceleraciones articulares q̈ (para calcular τ)</div>
+  <div class="matrix-label">q̈₁ … q̈ₙ  [rad/s²]</div>
+  <div class="matrix-wrap"><div class="matrix-grid" id="ddqGrid" style="grid-template-columns: repeat(1,72px)"></div></div>
+</div>
+
+<button class="run-btn" onclick="runAlgorithm()">▶  Ejecutar algoritmo</button>
+<div class="error-box" id="errorBox"></div>
+
+<!-- Caja para mostrar la ecuación de resultado final -->
+<div class="result-card" id="resultCard">
+  <div class="result-title">Resultado  —  τ = D · q̈ + H + C</div>
+  <div class="eq-row" id="eqRow"></div>
+  <div class="steps-log" id="stepsLog"></div>
+
+  <!-- Contenedor para Pasos Detallados Académicos -->
+  <div id="detailedResults" class="accordion" style="display:none; margin-top: 2rem;">
+    <div style="padding: 1rem; font-family: var(--sans); font-weight: 800; color: var(--gold); border-bottom: 1px solid var(--border); font-size: 0.9rem;">
+      PROCEDIMIENTO MATEMÁTICO DETALLADO
+    </div>
+    <div id="accordionContainer"></div>
+  </div>
+</div>
+
+<script>
+// ── Funciones matemáticas auxiliares ──────────────────────────
+const I4 = () => [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]];
+const zeros4 = () => Array.from({length:4},()=>[0,0,0,0]);
+
+function mmul(A, B) {
+  const R = zeros4();
+  for(let i=0;i<4;i++) for(let j=0;j<4;j++) for(let k=0;k<4;k++) R[i][j]+=A[i][k]*B[k][j];
+  return R;
+}
+function minv(M) {
+  // Cálculo de inversa de matriz 4x4 mediante eliminación Gauss-Jordan
+  const A = M.map(r=>[...r,0,0,0,0]);
+  for(let i=0;i<4;i++) A[i][4+i]=1;
+  for(let c=0;c<4;c++){
+    let pr=c; for(let r=c+1;r<4;r++) if(Math.abs(A[r][c])>Math.abs(A[pr][c])) pr=r;
+    [A[c],A[pr]]=[A[pr],A[c]];
+    const piv=A[c][c]; if(Math.abs(piv)<1e-14) return I4(); // Retorna identidad si la matriz es singular
+    for(let j=0;j<8;j++) A[c][j]/=piv;
+    for(let r=0;r<4;r++) if(r!==c){const f=A[r][c]; for(let j=0;j<8;j++) A[r][j]-=f*A[c][j];}
+  }
+  return A.map(r=>r.slice(4));
+}
+function mtranspose(A){ return A.map((_,i)=>A.map(r=>r[i])); }
+function trace(A){ return A[0][0]+A[1][1]+A[2][2]+A[3][3]; }
+
+// Analizador de expresiones matematicas: permite ingresar "pi/2", "pi", o números simples
+function parseExpr(s) {
+  if(s===null||s===undefined||s==='') return 0;
+  const clean = String(s).trim().replace(/pi/gi,'Math.PI');
+  try { return Function('"use strict";return ('+clean+')')(); }
+  catch(e){ return NaN; }
+}
+
+// Calcula la matriz de transformación usando parámetros Denavit-Hartenberg (D-H)
+function dhMat(theta,d,a,alpha){
+  const ct=Math.cos(theta),st=Math.sin(theta),ca=Math.cos(alpha),sa=Math.sin(alpha);
+  return [[ct,-st*ca,st*sa,a*ct],[st,ct*ca,-ct*sa,a*st],[0,sa,ca,d],[0,0,0,1]];
+}
+
+// Matrices de derivación Q
+const Q_R = [[0,-1,0,0],[1,0,0,0],[0,0,0,0],[0,0,0,0]];
+const Q_P = [[0,0,0,0],[0,0,0,0],[0,0,0,1],[0,0,0,0]];
+
+function computeUij(A0list, i, j, dhParams) {
+  if(j>i) return zeros4();
+  const A0jm1 = j===1 ? I4() : A0list[j-2];
+  const A0i   = A0list[i-1];
+  const Aji   = mmul(minv(A0jm1), A0i);
+  const type  = dhParams[j-1][4];
+  const Qj    = type === 'P' ? Q_P : Q_R;
+  return mmul(mmul(A0jm1, Qj), Aji);
+}
+
+// Calcula la derivada cruzada Uijk mediante diferenciación numérica (aproximación)
+function computeUijk(qArr, dhParams, i, j, k, eps=1e-6) {
+  const qf = [...qArr]; qf[k-1]+=eps;
+  const qb = [...qArr]; qb[k-1]-=eps;
+  const A0f = buildA0list(qf, dhParams);
+  const A0b = buildA0list(qb, dhParams);
+  const Uf  = computeUij(A0f, i, j, dhParams);
+  const Ub  = computeUij(A0b, i, j, dhParams);
+  return Uf.map((row,ri)=>row.map((v,ci)=>(v-Ub[ri][ci])/(2*eps)));
+}
+
+function buildA0list(qArr, dhParams) {
+  const n=qArr.length, list=[];
+  let acc=I4();
+  for(let i=0;i<n;i++){
+    const [thetaBase, dBase, a, alpha, type] = dhParams[i];
+    const theta = type === 'P' ? thetaBase : thetaBase + qArr[i];
+    const d     = type === 'P' ? dBase + qArr[i] : dBase;
+    const Ai = dhMat(theta,d,a,alpha);
+    acc = mmul(acc,Ai);
+    list.push(acc.map(r=>[...r]));
+  }
+  return list;
+}
+
+// Matriz de pseudoinercia para una masa puntual en un punto (rx, ry, rz)
+function pseudoInertia(m,rx,ry,rz){
+  const Ixx=m*(ry*ry+rz*rz), Iyy=m*(rx*rx+rz*rz), Izz=m*(rx*rx+ry*ry);
+  const Ixy=-m*rx*ry, Ixz=-m*rx*rz, Iyz=-m*ry*rz;
+  return [
+    [(Iyy+Izz-Ixx)/2, -Ixy,           -Ixz,           m*rx],
+    [-Ixy,            (Ixx+Izz-Iyy)/2, -Iyz,           m*ry],
+    [-Ixz,            -Iyz,            (Ixx+Iyy-Izz)/2, m*rz],
+    [m*rx,            m*ry,            m*rz,            m   ]
+  ];
+}
+
+// ── ALGORITMO PRINCIPAL ───────────────────────────────────────
+function lagrEuler(qArr, ddqArr, dhParams, cmList, masses, gVec) {
+  const n = qArr.length;
+  const log = [];
+  const push = (cls,txt)=>log.push({cls,txt});
+
+  const typesStr = dhParams.map((p,i)=>`E${i+1}:${p[4]==='P'?'Prismática':'Rotacional'}`).join(', ');
+  push('info',`→ Detección automática: [ ${typesStr} ]\n`);
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PASO 1: MATRICES DE TRANSFORMACIÓN HOMOGÉNEA (⁰Aᵢ)
+     Evaluando los parámetros D-H para encontrar la posición y orientación de 
+     cada sistema de coordenadas {i} con respecto a la base {0}.
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  push('info','[1/10] Construyendo matrices de transformación base (⁰Aᵢ)...');
+  const A0list = buildA0list(qArr, dhParams);
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PASO 2: MATRICES DE DERIVADA PRIMERA (Uᵢⱼ)
+     Representan la sensibilidad de la matriz de transformación ⁰Aᵢ 
+     respecto a la variable articular qⱼ.
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  push('info','[2/10] Calculando matrices de derivada primera (Uᵢⱼ)...');
+  const U = {};
+  for(let i=1;i<=n;i++) {
+    for(let j=1;j<=n;j++) {
+      U[`${i}_${j}`] = computeUij(A0list, i, j, dhParams);
+    }
+  }
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PASO 3: MATRICES DE PSEUDOINERCIA (Jᵢ)
+     Describen las propiedades de masa (inercias y masa) y la ubicación 
+     del centro de masa del eslabón i expresadas en {i}.
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  push('info','[3/10] Construyendo matrices de Pseudoinercia (Jᵢ)...');
+  const Jlist = masses.map((m,idx) => pseudoInertia(m, ...cmList[idx]));
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PASO 4: ELEMENTOS DE LA MATRIZ DE INERCIA ROBÓTICA (D)
+     Dᵢⱼ = Σ Tr(Uₖⱼ · Jₖ · (Uₖᵢ)^T) 
+     Mide el acoplamiento inercial que siente el eslabón "i" al moverse el "j".
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  push('info','[4/10] Calculando matriz de inercia del manipulador (D)...');
+  const D = Array.from({length:n}, ()=>Array(n).fill(0));
+  for(let i=1;i<=n;i++){
+    for(let j=1;j<=n;j++){
+      let v=0;
+      for(let k=Math.max(i,j);k<=n;k++){
+        const Ukj = U[`${k}_${j}`], Jk = Jlist[k-1], Uki = U[`${k}_${i}`];
+        v += trace(mmul(mmul(Ukj, Jk), mtranspose(Uki)));
+      }
+      D[i-1][j-1]=v;
+    }
+  }
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PASO 5: MATRICES DE DERIVADA SEGUNDA CRUZADAS (Uᵢₖₘ)
+     Tasa de cambio de Uᵢₖ respecto al movimiento articular qₘ.
+     Son fundamentales para modelar fuerzas de Coriolis y centrífugas.
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  push('info','[5/10] Computando derivadas cruzadas (Uᵢₖₘ) integradas...');
+  // Se integran y resuelven dinámicamente en el paso 6 para evitar uso masivo de RAM.
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PASO 6: COEFICIENTES DE CORIOLIS Y CENTRÍFUGA (hᵢₖₘ)
+     Fuerzas y acoplamientos al activar k y m mientras se mide sobre i.
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  push('info','[6/10] Evaluando interacciones de Coriolis y centrífuga (hᵢₖₘ)...');
+  const h_coefs = {}; 
+  for(let i=1;i<=n;i++){
+    for(let k=1;k<=n;k++){
+      for(let m=1;m<=n;m++){
+        let hikm = 0;
+        for(let jj=Math.max(i,k,m); jj<=n; jj++){
+          const Ujkm = computeUijk(qArr, dhParams, jj, k, m);
+          const Jj   = Jlist[jj-1];
+          const Uji  = U[`${jj}_${i}`];
+          hikm += trace(mmul(mmul(Ujkm, Jj), mtranspose(Uji)));
+        }
+        h_coefs[`${i}_${k}_${m}`] = hikm;
+      }
+    }
+  }
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PASO 7: PARES DE VELOCIDAD, CORIOLIS Y CENTRÍFUGA TOTALES (H)
+     H_i = Σ Σ hᵢₖₘ · q̇ₖ · q̇ₘ
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  push('info','[7/10] Vectorizando términos de velocidad (Vector H)...');
+  const H = Array(n).fill(0);
+  for(let i=1;i<=n;i++){
+    let hi = 0;
+    for(let k=1;k<=n;k++){
+      for(let m=1;m<=n;m++){
+        // Por no usar q̇ en nuestra UI, la velocidad es 0 simultáneamente.
+        hi += h_coefs[`${i}_${k}_${m}`] * 0; 
+      }
+    }
+    H[i-1] = hi;
+  }
+  push('warn','       (Variables vector q̇=0 no integradas aún en interfaz.)');
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PASO 8: CARGA POR GRAVEDAD (C)
+     Compensa el peso de los eslabones: C_i = Σ -m_j * g · U_ji · rj
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  push('info','[8/10] Computando influencia térmica y de masa (Gravedad C)...');
+  const gFull = [...gVec, 0];
+  const C = Array(n).fill(0);
+  for(let i=1;i<=n;i++){
+    let ci = 0;
+    for(let j=i;j<=n;j++){
+      const Uji = U[`${j}_${i}`];
+      const mj  = masses[j-1];
+      const rj  = [...cmList[j-1], 1]; 
+      
+      const Ujirj = Uji.map(row => row.reduce((s,v,c) => s + v*rj[c], 0));
+      ci += -mj * gFull.reduce((Sum, gVal, idx) => Sum + gVal * Ujirj[idx], 0);
+    }
+    C[i-1] = ci;
+  }
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PASO 9: PARES DE INERCIA (D(q)·q̈)
+     Torque extra para iniciar la aceleración dada q̈ de los eslabones pesados.
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  push('info','[9/10] Escalando inercia total por aceleraciones (D(q)·q̈)...');
+  const inertTorque = D.map((row) => row.reduce((s, dVal, j) => s + dVal * ddqArr[j], 0));
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PASO 10: ECUACIÓN FINAL DE LÍNEA DINÁMICA (τ)
+     SUMA COMPLETA -> τ = D(q)q̈ + H(q,q̇) + C(q)
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  push('info','[10/10] Ensamblando Ecuación Final Total (τ)...');
+  const tau = inertTorque.map((tau_inercial, i) => tau_inercial + H[i] + C[i]);
+
+  push('ok','\n✓ Dinámica Lagrange-Euler [10/10] Finalizada exitosamente.');
+  
+  // Retornamos todos los datos intermedios para la visualización académica
+  return {
+    D, H, C, tau, log,
+    A0list,    // Matrices de transformación
+    U,         // Derivadas primer orden
+    Jlist,     // Pseudo-inercia
+    dhParams,  // Parámetros D-H
+    qArr,      // Coordenadas articulares
+    h_coefs    // Coeficientes hikm
+  };
+}
+
+// ── LÓGICA DE INTERFAZ PARA PASOS DETALLADOS ──────────────────
+function toggleAllSteps(checked) {
+  const steps = ['A','Uij', 'Ji', 'D', 'Uikm', 'hikm', 'H', 'C'];
+  steps.forEach(s => {
+    const el = document.getElementById('step_'+s);
+    if(el) el.checked = checked;
+  });
+}
+
+function createAccordionItem(title, formula, contentContainer, index = 0) {
+  const item = document.createElement('div');
+  item.className = 'accordion-item fade-in-item';
+  item.style.animationDelay = `${index * 0.1}s`;
+  
+  const header = document.createElement('div');
+  header.className = 'accordion-header';
+  header.innerHTML = `<span>${title}</span><span style="font-size:0.7rem; opacity:0.6;">▼</span>`;
+  header.onclick = () => item.classList.toggle('active');
+  
+  const content = document.createElement('div');
+  content.className = 'accordion-content';
+  
+  if(formula) {
+    const formEl = document.createElement('div');
+    formEl.className = 'step-formula';
+    formEl.textContent = formula;
+    content.appendChild(formEl);
+  }
+  
+  content.appendChild(contentContainer);
+  item.appendChild(header);
+  item.appendChild(content);
+  return item;
+}
+
+function renderDetailedSteps(results, dhParams) {
+  const container = document.getElementById('accordionContainer');
+  const mainDiv = document.getElementById('detailedResults');
+  container.innerHTML = '';
+  let hasSteps = false;
+
+  const n = dhParams.length;
+  let sIdx = 0;
+
+  // 1. Matrices A0i
+  if(document.getElementById('step_A').checked) {
+    hasSteps = true;
+    const div = document.createElement('div');
+    div.className = 'flex-matrices';
+    results.A0list.forEach((mat, i) => {
+      div.appendChild(makeMatGrid(mat, `⁰A${i+1}`));
+    });
+    container.appendChild(createAccordionItem('1. Matrices de Transformación Homogénea', '⁰Aᵢ = ⁰A₁ · ¹A₂ · ... · ⁱ⁻¹Aᵢ', div, sIdx++));
+  }
+
+  // 2. Derivadas Uij
+  if(document.getElementById('step_Uij').checked) {
+    hasSteps = true;
+    const div = document.createElement('div');
+    div.className = 'flex-matrices';
+    for(let i=1; i<=n; i++) {
+      for(let j=1; j<=n; j++) {
+        if(results.U[`${i}_${j}`]) {
+          div.appendChild(makeMatGrid(results.U[`${i}_${j}`], `U${i}${j}`));
+        }
+      }
+    }
+    container.appendChild(createAccordionItem('2. Matrices de Derivada Primera', 'Uᵢⱼ = ∂(⁰Aᵢ) / ∂qⱼ', div, sIdx++));
+  }
+
+  // 3. Pseudo-inercia Ji
+  if(document.getElementById('step_Ji').checked) {
+    hasSteps = true;
+    const div = document.createElement('div');
+    div.className = 'flex-matrices';
+    results.Jlist.forEach((mat, i) => {
+      div.appendChild(makeMatGrid(mat, `J${i+1}`));
+    });
+    container.appendChild(createAccordionItem('3. Matrices de Pseudo-inercia', 'Jᵢ = ∫ rᵢ · rᵢᵀ dmᵢ', div, sIdx++));
+  }
+
+  // 4. Matriz D
+  if(document.getElementById('step_D').checked) {
+    hasSteps = true;
+    const div = document.createElement('div');
+    div.appendChild(makeMatGrid(results.D, 'Matriz de Inercia D(q)'));
+    container.appendChild(createAccordionItem('4. Matriz de Inercia del Robot', 'Dᵢⱼ = Σ Tr(Uₖⱼ · Jₖ · Uₖᵢᵀ)', div, sIdx++));
+  }
+
+  // 4.5 Derivadas Segundas Uikm
+  if(document.getElementById('step_Uikm').checked) {
+    hasSteps = true;
+    const div = document.createElement('div');
+    div.className = 'flex-matrices';
+    for(let i=1; i<=n; i++) {
+        for(let k=1; k<=n; k++) {
+            for(let m=1; m<=n; m++) {
+                if(i >= k && i >= m) {
+                    const Uikm = computeUijk(results.qArr, results.dhParams, i, k, m);
+                    div.appendChild(makeMatGrid(Uikm, `U${i}${k}${m}`));
+                }
+            }
+        }
+    }
+    container.appendChild(createAccordionItem('5. Derivadas Segundas Cruzadas', 'Uᵢₖₘ = ∂(Uᵢₖ) / ∂qₘ', div, sIdx++));
+  }
+
+  // 5. Coeficientes hikm
+  if(document.getElementById('step_hikm') && document.getElementById('step_hikm').checked) {
+    hasSteps = true;
+    const div = document.createElement('div');
+    div.className = 'flex-matrices';
+    for(let key in results.h_coefs) {
+      const val = results.h_coefs[key];
+      if(Math.abs(val) > 1e-9) {
+        const item = document.createElement('div');
+        item.style.fontFamily = 'var(--mono)';
+        item.style.fontSize = '0.75rem';
+        item.style.padding = '8px 12px';
+        item.style.background = 'rgba(255,255,255,0.05)';
+        item.style.borderRadius = '6px';
+        item.style.color = 'var(--accent)';
+        item.textContent = `h[${key.replace(/_/g,',')}] = ${val.toFixed(6)}`;
+        div.appendChild(item);
+      }
+    }
+    container.appendChild(createAccordionItem('6. Coeficientes de Coriolis y Centrífugos', 'hᵢₖₘ = Σ Tr(Uⱼₖₘ · Jⱼ · Uⱼᵢᵀ)', div, sIdx++));
+  }
+
+  // 6. Vector H
+  if(document.getElementById('step_H').checked) {
+    hasSteps = true;
+    const div = document.createElement('div');
+    div.appendChild(makeMatGrid(results.H.map(v=>[v]), 'Vector H(q, q̇)'));
+    container.appendChild(createAccordionItem('7. Fuerzas de Velocidad (Coriolis)', 'Hᵢ = Σ Σ hᵢₖₘ · q̇ₖ · q̇ₘ', div, sIdx++));
+  }
+
+  // 7. Vector C
+  if(document.getElementById('step_C').checked) {
+    hasSteps = true;
+    const div = document.createElement('div');
+    div.appendChild(makeMatGrid(results.C.map(v=>[v]), 'Vector de Gravedad C(q)'));
+    container.appendChild(createAccordionItem('8. Cargas Gravitacionales', 'Cᵢ = Σ -mⱼ · gᵀ · Uⱼᵢ · rⱼ', div, sIdx++));
+  }
+
+  mainDiv.style.display = hasSteps ? 'block' : 'none';
+}
+
+// ── ESTADO DE LA INTERFAZ (UI) ────────────────────────────────
+let dof = 2;
+
+function changeDOF(delta) {
+  dof = Math.max(1, dof+delta);
+  document.getElementById('dofDisplay').textContent = dof;
+  rebuildGrids();
+}
+
+function rebuildGrids() {
+  buildDHGrid();
+  buildCMGrid();
+  buildMassGrid();
+  buildDdqGrid();
+  document.getElementById('resultCard').classList.remove('show');
+  document.getElementById('errorBox').classList.remove('show');
+}
+
+const DH_DEFAULTS = [
+  ['0','0','0.1','-pi/2'],
+  ['0','0','0.1','0'],
+  ['0','0','0.1','0'],
+  ['0','0','0.1','0'],
+  ['0','0','0.1','0'],
+  ['0','0','0.1','0'],
+];
+const CM_DEFAULTS = [
+  ['0','0','0.05'],['0','0','0.05'],['0','0','0.05'],
+  ['0','0','0.05'],['0','0','0.05'],['0','0','0.05'],
+];
+
+function buildDHGrid() {
+  const g = document.getElementById('dhGrid');
+  g.style.gridTemplateColumns = `repeat(4,72px)`;
+  g.innerHTML='';
+  for(let i=0;i<dof;i++){
+    const [t,d,a,al]=DH_DEFAULTS[i]||[`q${i+1}`,'0','0','0'];
+    ['θᵢ (q'+String(i+1)+')','dᵢ','aᵢ','αᵢ'].forEach((_,ci)=>{
+      const inp=document.createElement('input');
+      inp.type='text';
+      inp.value=[t,d,a,al][ci];
+      inp.placeholder=['θ','d','a','α'][ci];
+      inp.id=`dh_${i}_${ci}`;
+      // Columna 3 (αᵢ) es un parámetro fijo, pero se mantiene editable
+      g.appendChild(inp);
+    });
+  }
+}
+
+function buildCMGrid() {
+  const g = document.getElementById('cmGrid');
+  g.style.gridTemplateColumns = `repeat(3,72px)`;
+  g.innerHTML='';
+  for(let i=0;i<dof;i++){
+    const [x,y,z]=CM_DEFAULTS[i]||['0','0','0'];
+    [x,y,z].forEach((val,ci)=>{
+      const inp=document.createElement('input');
+      inp.type='text'; inp.value=val;
+      inp.placeholder=['X','Y','Z'][ci];
+      inp.id=`cm_${i}_${ci}`;
+      g.appendChild(inp);
+    });
+  }
+}
+
+function buildMassGrid() {
+  const g = document.getElementById('massGrid');
+  g.style.gridTemplateColumns = `repeat(${dof},72px)`;
+  g.innerHTML='';
+  const defaults=[0.15,0.20,0.18,0.10,0.12,0.08];
+  for(let i=0;i<dof;i++){
+    const inp=document.createElement('input');
+    inp.type='text'; inp.value=defaults[i]||'0.1';
+    inp.placeholder=`m${i+1}`; inp.id=`mass_${i}`;
+    g.appendChild(inp);
+  }
+}
+
+function buildDdqGrid() {
+  const g = document.getElementById('ddqGrid');
+  g.style.gridTemplateColumns = `repeat(${dof},72px)`;
+  g.innerHTML='';
+  for(let i=0;i<dof;i++){
+    const inp=document.createElement('input');
+    inp.type='text'; inp.value='0';
+    inp.placeholder=`q̈${i+1}`; inp.id=`ddq_${i}`;
+    g.appendChild(inp);
+  }
+}
+
+function showError(msg) {
+  const b=document.getElementById('errorBox');
+  b.textContent=msg; b.classList.add('show');
+}
+
+// ── FUNCIÓN DE EJECUCIÓN (Llamada al presionar el botón) ──────
+function runAlgorithm() {
+  document.getElementById('errorBox').classList.remove('show');
+  document.getElementById('resultCard').classList.remove('show');
+
+  try {
+    const dhParams=[], qArr=[], ddqArr=[], masses=[], cmList=[], gVec=[];
+
+    for(let i=0;i<dof;i++){
+      const t_str = document.getElementById(`dh_${i}_0`)?.value || '0';
+      const d_str = document.getElementById(`dh_${i}_1`)?.value || '0';
+      
+      let type = 'R', thetaOffset = 0, dOffset = 0;
+      if(/[qd]/i.test(d_str)) {
+        type = 'P';
+        thetaOffset = parseExpr(t_str);
+        dOffset = 0;
+      } else {
+        type = 'R';
+        thetaOffset = 0;
+        dOffset = parseExpr(d_str);
+      }
+      
+      const a  = parseExpr(document.getElementById(`dh_${i}_2`)?.value);
+      const al = parseExpr(document.getElementById(`dh_${i}_3`)?.value);
+      if([thetaOffset, dOffset, a, al].some(isNaN)) throw new Error(`Parámetro D-H no válido en fila ${i+1}`);
+      dhParams.push([thetaOffset, dOffset, a, al, type]);
+      qArr.push(0); // posición articular = 0 (home)
+      ddqArr.push(parseExpr(document.getElementById(`ddq_${i}`)?.value)||0);
+      masses.push(parseExpr(document.getElementById(`mass_${i}`)?.value)||0.1);
+      cmList.push([
+        parseExpr(document.getElementById(`cm_${i}_0`)?.value),
+        parseExpr(document.getElementById(`cm_${i}_1`)?.value),
+        parseExpr(document.getElementById(`cm_${i}_2`)?.value),
+      ]);
+    }
+
+    const gInputs=document.querySelectorAll('#gravGrid input');
+    gVec.push(...[...gInputs].map(el=>parseExpr(el.value)));
+    if(gVec.some(isNaN)) throw new Error('Vector gravedad no válido');
+
+    // Ejecutar la rutina principal de Lagrange-Euler
+    const results = lagrEuler(qArr,ddqArr,dhParams,cmList,masses,gVec);
+
+    // Mostrar el resultado en pantalla
+    renderResult(results.D, results.H, results.C, results.tau, ddqArr, results.log);
+    
+    // Mostrar pasos académicos detallados
+    renderDetailedSteps(results, dhParams);
+
+  } catch(e) {
+    showError('Error: '+e.message);
+  }
+}
+
+function fmt(v){ return (typeof v==='number') ? v.toFixed(6) : '0.000000'; }
+
+function makeMatGrid(vals2d, name, colorClass='') {
+  const wrap=document.createElement('div');
+  wrap.className='eq-block';
+  const lbl=document.createElement('div');
+  lbl.className='mat-name'; lbl.textContent=name;
+  wrap.appendChild(lbl);
+  const g=document.createElement('div');
+  g.className='matrix-grid';
+  const rows=vals2d.length, cols=vals2d[0].length;
+  g.style.gridTemplateColumns=`repeat(${cols},68px)`;
+  vals2d.forEach(row=>row.forEach(v=>{
+    const inp=document.createElement('input');
+    inp.type='text'; inp.readOnly=true;
+    inp.className='read-only'+(colorClass?' '+colorClass:'');
+    inp.value=fmt(v);
+    g.appendChild(inp);
+  }));
+  wrap.appendChild(g);
+  return wrap;
+}
+
+function renderResult(D,H,C,tau,ddq,log){
+  const row=document.getElementById('eqRow');
+  row.innerHTML='';
+
+  // Construir la salida visual de matrices (τ = D·q̈ + H + C)
+  const op=(t)=>{ const d=document.createElement('div'); d.className='eq-op'; d.textContent=t; return d; };
+
+  row.appendChild(makeMatGrid(tau.map(v=>[v]),'F/T  [Nm]','result-cell'));
+  row.appendChild(op('='));
+  row.appendChild(makeMatGrid(D,'Matriz D'));
+  row.appendChild(op('×'));
+  row.appendChild(makeMatGrid(ddq.map(v=>[v]),'q̈'));
+  row.appendChild(op('+'));
+  row.appendChild(makeMatGrid(H.map(v=>[v]),'Matriz H'));
+  row.appendChild(op('+'));
+  row.appendChild(makeMatGrid(C.map(v=>[v]),'Matriz C'));
+
+  // Mostrar el registro (log) de pasos en la interfaz
+  const logEl=document.getElementById('stepsLog');
+  logEl.innerHTML='';
+  log.forEach(({cls,txt})=>{
+    const span=document.createElement('span');
+    span.className=cls; span.textContent=txt+'\n';
+    logEl.appendChild(span);
+  });
+
+  document.getElementById('resultCard').classList.add('show');
+  document.getElementById('resultCard').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+// ── INICIALIZACIÓN (Se ejecuta al cargar la página) ───────────
+rebuildGrids();
+</script>
+</body>
+</html>
